@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Configurable CPU Particle System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 1px solid black;
+            margin: 10px;
+        }
+        #controls {
+            margin: 10px;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 5px;
+        }
+        #controls div {
+            margin: 5px 0;
+        }
+        #stats {
+            font-family: monospace;
+            margin: 10px;
+        }
+        label {
+            display: inline-block;
+            width: 150px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <div>
+            <label for="numParticles">Number of Particles:</label>
+            <input type="range" id="numParticles" min="10000" max="500000" step = "1000" value="20000">
+            <span id="numParticlesValue">20000</span>
+        </div>
+        <div>
+            <label for="particleRadius">Particle Radius:</label>
+            <input type="range" id="particleRadius" min="1" max="10" value="2" step="0.5">
+            <span id="particleRadiusValue">2</span>
+        </div>
+        <div>
+            <label for="speed">Speed:</label>
+            <input type="range" id="speed" min="0.1" max="5" value="1" step="0.1">
+            <span id="speedValue">1</span>
+        </div>
+        <div>
+            <label for="particleColor">Particle Color:</label>
+            <input type="color" id="particleColor" value="#ffffff">
+        </div>
+        <div>
+            <label for="bgColor">Background Color:</label>
+            <input type="color" id="bgColor" value="#000000">
+        </div>
+        <button id="resetBtn">Reset Particles</button>
+    </div>
+
+    <canvas id="cpuCanvas" width="800" height="400"></canvas>
+    <div id="stats"></div>
+
+    <script>
+        // Config object to store all parameters
+        const config = {
+            numParticles: 1000,
+            particleRadius: 2,
+            speed: 1,
+            particleColor: '#ffffff',
+            bgColor: '#000000'
+        };
+
+        // Canvas setup
+        const canvas = document.getElementById('cpuCanvas');
+        const ctx = canvas.getContext('2d');
+        const width = canvas.width;
+        const height = canvas.height;
+
+        let particles = [];
+        let frameCount = 0;
+        let totalFrameTime = 0;
+
+        // Initialize particles
+        function initParticles() {
+            particles = [];
+            for (let i = 0; i < config.numParticles; i++) {
+                particles.push({
+                    x: Math.random() * width,
+                    y: Math.random() * height,
+                    vx: (Math.random() - 0.5) * 4 * config.speed,
+                    vy: (Math.random() - 0.5) * 4 * config.speed
+                });
+            }
+        }
+
+        function updateParticles() {
+            for (let p of particles) {
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // Bounce off walls
+                if (p.x < config.particleRadius) {
+                    p.x = config.particleRadius;
+                    p.vx *= -1;
+                } else if (p.x > width - config.particleRadius) {
+                    p.x = width - config.particleRadius;
+                    p.vx *= -1;
+                }
+                
+                if (p.y < config.particleRadius) {
+                    p.y = config.particleRadius;
+                    p.vy *= -1;
+                } else if (p.y > height - config.particleRadius) {
+                    p.y = height - config.particleRadius;
+                    p.vy *= -1;
+                }
+            }
+        }
+
+        function render() {
+            const startTime = performance.now();
+
+            // Clear canvas
+            ctx.fillStyle = config.bgColor;
+            ctx.fillRect(0, 0, width, height);
+
+            // Draw particles
+            ctx.fillStyle = config.particleColor;
+            for (let p of particles) {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, config.particleRadius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Update performance stats
+            frameCount++;
+            const frameTime = performance.now() - startTime;
+            totalFrameTime += frameTime;
+
+            if (frameCount % 60 === 0) {
+                const avgFrameTime = totalFrameTime / frameCount;
+                const now = performance.now();
+
+                const fps = 1000 / (now - this.lastTime) * 60;
+                this.lastTime = now;
+                
+                document.getElementById('stats').textContent = 
+                    `Average frame time: ${avgFrameTime.toFixed(2)}ms | FPS: ${fps.toFixed(1)} | Particles: ${particles.length}`;
+                
+                if (frameCount > 600) {
+                    frameCount = 0;
+                    totalFrameTime = 0;
+                }
+            }
+        }
+
+        function animate() {
+            updateParticles();
+            render();
+            requestAnimationFrame(animate);
+        }
+
+        // UI Controls
+        function setupControls() {
+            // Number of particles
+            const numParticlesInput = document.getElementById('numParticles');
+            const numParticlesValue = document.getElementById('numParticlesValue');
+            numParticlesInput.oninput = () => {
+                config.numParticles = parseInt(numParticlesInput.value);
+                numParticlesValue.textContent = config.numParticles;
+            };
+
+            // Particle radius
+            const radiusInput = document.getElementById('particleRadius');
+            const radiusValue = document.getElementById('particleRadiusValue');
+            radiusInput.oninput = () => {
+                config.particleRadius = parseFloat(radiusInput.value);
+                radiusValue.textContent = config.particleRadius;
+            };
+
+            // Speed
+            const speedInput = document.getElementById('speed');
+            const speedValue = document.getElementById('speedValue');
+            speedInput.oninput = () => {
+                config.speed = parseFloat(speedInput.value);
+                speedValue.textContent = config.speed;
+            };
+
+            // Colors
+            const particleColorInput = document.getElementById('particleColor');
+            particleColorInput.oninput = () => {
+                config.particleColor = particleColorInput.value;
+            };
+
+            const bgColorInput = document.getElementById('bgColor');
+            bgColorInput.oninput = () => {
+                config.bgColor = bgColorInput.value;
+            };
+
+            // Reset button
+            const resetBtn = document.getElementById('resetBtn');
+            resetBtn.onclick = initParticles;
+        }
+
+        // Initialize and start
+        setupControls();
+        initParticles();
+        animate();
+    </script>
+</body>
+</html>

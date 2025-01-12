@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GPU Benchmark</title>
+    <style>
+        canvas {
+            border: 1px solid #ccc;
+        }
+        #gpuResults {
+            margin-top: 10px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gpuCanvas" width="800" height="600"></canvas>
+    <div id="gpuResults"></div>
+    <script>
+        const canvas = document.getElementById('gpuCanvas');
+        const gl = canvas.getContext('webgl', { antialias: true });
+        const resultsDiv = document.getElementById('gpuResults');
+
+        if (!gl) {
+            console.error('WebGL not supported');
+        }
+
+        // Generate random shapes
+        const shapes = [];
+        for (let i = 0; i < 10000; i++) {
+            shapes.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 20 + 5,
+                color: [Math.random(), Math.random(), Math.random(), 1.0]
+            });
+        }
+
+        // Create shaders with improved precision
+        const vertexShaderSource = `
+            attribute vec2 a_position;
+            attribute vec4 a_color;
+            varying vec4 v_color;
+            void main() {
+                gl_Position = vec4(a_position, 0.0, 1.0);
+                v_color = a_color;
+            }
+        `;
+        const fragmentShaderSource = `
+            precision highp float;
+            varying vec4 v_color;
+            void main() {
+                gl_FragColor = v_color;
+            }
+        `;
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+        // Create program
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error(gl.getProgramInfoLog(program));
+            throw new Error('Failed to link program');
+        }
+        gl.useProgram(program);
+
+        // Create buffers with improved circle generation
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        
+        function generateCircleVertices(shape, segments) {
+            const vertices = [];
+            // Add center vertex
+            vertices.push(
+                (shape.x / canvas.width) * 2 - 1,
+                (shape.y / canvas.height) * 2 - 1
+            );
+            
+            // Generate vertices for the circle
+            for (let i = 0; i <= segments; i++) {
+                const angle = (i / segments) * Math.PI * 2;
+                const x = shape.x + Math.cos(angle) * shape.size;
+                const y = shape.y + Math.sin(angle) * shape.size;
+                vertices.push(
+                    (x / canvas.width) * 2 - 1,
+                    (y / canvas.height) * 2 - 1
+                );
+            }
+            return vertices;
+        }
+
+        const SEGMENTS = 32; // Increased number of segments for smoother circles
+        const positions = new Float32Array(shapes.flatMap(shape => 
+            generateCircleVertices(shape, SEGMENTS)
+        ));
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+        const colorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        const colors = new Float32Array(shapes.flatMap(shape => {
+            const colorArray = [];
+            // One color for center vertex
+            colorArray.push(...shape.color);
+            // Colors for each vertex on the circle
+            for (let i = 0; i <= SEGMENTS; i++) {
+                colorArray.push(...shape.color);
+            }
+            return colorArray;
+        }));
+        gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
+
+        // Set up attributes
+        const positionLocation = gl.getAttribLocation(program, 'a_position');
+        gl.enableVertexAttribArray(positionLocation);
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+        const colorLocation = gl.getAttribLocation(program, 'a_color');
+        gl.enableVertexAttribArray(colorLocation);
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.vertexAttribPointer(colorLocation, 4, gl.FLOAT, false, 0, 0);
+
+        // Enable antialiasing and clear
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.clearColor(1.0, 1.0, 1.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        // Measure rendering time
+        const startTime = performance.now();
+        
+        // Draw circles using triangle fans
+        let offset = 0;
+        for (let i = 0; i < shapes.length; i++) {
+            gl.drawArrays(gl.TRIANGLE_FAN, offset, SEGMENTS + 2);
+            offset += SEGMENTS + 2;
+        }
+        
+        const endTime = performance.now();
+
+        // Measure memory usage
+        const memoryUsage = positions.byteLength + colors.byteLength;
+
+        const resultText = `
+            GPU Draw Time: ${(endTime - startTime).toFixed(2)} ms
+            Memory Usage: ${(memoryUsage / (1024 * 1024)).toFixed(2)} MB
+            Circles: ${shapes.length}
+            Vertices per Circle: ${SEGMENTS + 2}
+        `;
+        resultsDiv.textContent = resultText;
+    </script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CPU Morphological Operations Benchmark</title>
+</head>
+<body>
+    <h2>CPU Morphological Operations</h2>
+    <canvas id="sourceCanvas"></canvas>
+    <canvas id="resultCanvas"></canvas>
+    <div id="metrics"></div>
+
+    <script>
+        const width = 512;
+        const height = 512;
+        const sourceCanvas = document.getElementById('sourceCanvas');
+        const resultCanvas = document.getElementById('resultCanvas');
+        sourceCanvas.width = resultCanvas.width = width;
+        sourceCanvas.height = resultCanvas.height = height;
+
+        // Load and process image
+        const img = new Image();
+        img.src = './4.png';
+        img.onload = async () => {
+            const ctx = sourceCanvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            
+            // Benchmark CPU operations
+            const metrics = await benchmarkCPU();
+            document.getElementById('metrics').innerHTML = `
+                <h3>Benchmark Results:</h3>
+                <table style="border-collapse: collapse; margin: 10px 0;">
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid #ddd;">getDataTime:</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">${metrics.getDataTime.toFixed(2)} ms</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid #ddd;">Process Time:</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">${metrics.processTime.toFixed(2)} ms</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid #ddd;">putDataTime:</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">${metrics.putDataTime.toFixed(2)} ms</td>
+                    </tr>
+                    <tr style="font-weight: bold;">
+                        <td style="padding: 8px; border: 1px solid #ddd;">Total Time:</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">${metrics.totalTime.toFixed(2)} ms</td>
+                    </tr>
+                </table>`;
+        };
+
+        async function benchmarkCPU() {
+            const ctx = sourceCanvas.getContext('2d');
+            const resultCtx = resultCanvas.getContext('2d');
+            
+            // Measure getData time
+            const t0 = performance.now();
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const getDataTime = performance.now() - t0;
+
+            // Measure processing time
+            const t1 = performance.now();
+            const result = erode(imageData.data);
+            const processTime = performance.now() - t1;
+
+            // Measure putData time
+            const t2 = performance.now();
+            resultCtx.putImageData(new ImageData(result, width, height), 0, 0);
+            const putDataTime = performance.now() - t2;
+
+            return {
+                getDataTime,
+                processTime,
+                putDataTime,
+                totalTime: getDataTime + processTime + putDataTime
+            };
+        }
+
+        function erode(data) {
+            const result = new Uint8ClampedArray(data.length);
+            const stride = width * 4;
+
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    const idx = (y * width + x) * 4;
+                    
+                    // Simple 3x3 erosion
+                    let min = 255;
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            const pos = idx + (dy * stride) + (dx * 4);
+                            min = Math.min(min, data[pos]);
+                        }
+                    }
+                    
+                    result[idx] = min;
+                    result[idx + 1] = min;
+                    result[idx + 2] = min;
+                    result[idx + 3] = 255;
+                }
+            }
+            return result;
+        }
+    </script>
+</body>
+</html>

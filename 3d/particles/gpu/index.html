@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>N-body Simulation Benchmark</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; }
+        canvas { display: block; }
+        #stats {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        #controls {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            border-radius: 5px;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="range"] {
+            width: 200px;
+        }
+        .value-display {
+            display: inline-block;
+            margin-left: 10px;
+            min-width: 50px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <div id="stats"></div>
+    <div id="controls">
+        <h3 style="margin-top: 0;">Simulation Controls</h3>
+        <div class="control-group">
+            <label>Particle Count: <span id="particleCountValue" class="value-display">1024</span></label>
+            <input type="range" id="particleCount" min="100" max="1000000" value="1024" step="10000">
+        </div>
+        <div class="control-group">
+            <label>Particle Size: <span id="particleSizeValue" class="value-display">0.5</span></label>
+            <input type="range" id="particleSize" min="0.1" max="2.0" value="0.5" step="0.1">
+        </div>
+        <div class="control-group">
+            <label>Simulation Speed: <span id="simulationSpeedValue" class="value-display">1.0</span></label>
+            <input type="range" id="simulationSpeed" min="0.1" max="3.0" value="1.0" step="0.1">
+        </div>
+        <div class="control-group">
+            <label>Gravity Strength: <span id="gravityStrengthValue" class="value-display">0.1</span></label>
+            <input type="range" id="gravityStrength" min="0.01" max="0.5" value="0.1" step="0.01">
+        </div>
+        <button id="resetSimulation">Reset Simulation</button>
+    </div>
+    
+    <script id="computeShader" type="x-shader/x-fragment">
+        #define POSITION_ATTRIB 0
+        #define VELOCITY_ATTRIB 1
+        
+        uniform float deltaTime;
+        uniform float gravitationalConstant;
+        
+        layout(std430, binding = 0) buffer Positions {
+            vec4 positions[];
+        };
+        
+        layout(std430, binding = 1) buffer Velocities {
+            vec4 velocities[];
+        };
+        
+        layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+        
+        void main() {
+            uint index = gl_GlobalInvocationID.x;
+            if (index >= positions.length()) return;
+            
+            vec3 pos = positions[index].xyz;
+            vec3 vel = velocities[index].xyz;
+            vec3 force = vec3(0.0);
+            
+            // Calculate gravitational forces
+            for (uint i = 0; i < positions.length(); i++) {
+                if (i == index) continue;
+                
+                vec3 otherPos = positions[i].xyz;
+                vec3 diff = otherPos - pos;
+                float distSqr = max(dot(diff, diff), 0.1);
+                float invDist = inversesqrt(distSqr);
+                float invDist3 = invDist * invDist * invDist;
+                
+                force += gravitationalConstant * diff * invDist3;
+            }
+            
+            // Update velocity and position
+            vel += force * deltaTime;
+            pos += vel * deltaTime;
+            
+            // Keep particles within bounds
+            vec3 bounds = vec3(50.0);
+            if (abs(pos.x) > bounds.x) vel.x *= -0.9;
+            if (abs(pos.y) > bounds.y) vel.y *= -0.9;
+            if (abs(pos.z) > bounds.z) vel.z *= -0.9;
+            
+            positions[index].xyz = pos;
+            velocities[index].xyz = vel;
+        }
+    </script>
+    
+    <script>
+        // Simulation parameters
+        let NUM_PARTICLES = 1024;
+        let GRAVITATIONAL_CONSTANT = 0.1;
+        let PARTICLE_SIZE = 0.5;
+        let SIMULATION_SPEED = 1.0;
+        
+        // Three.js setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        
+        let particles;
+        
+        function createParticleSystem() {
+            // Remove existing particle system if it exists
+            if (particles) {
+                scene.remove(particles);
+            }
+            
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(NUM_PARTICLES * 3);
+            const colors = new Float32Array(NUM_PARTICLES * 3);
+            const velocities = new Float32Array(NUM_PARTICLES * 3);
+            
+            for (let i = 0; i < NUM_PARTICLES; i++) {
+                // Position
+                positions[i * 3] = (Math.random() - 0.5) * 100;
+                positions[i * 3 + 1] = (Math.random() - 0.5) * 100;
+                positions[i * 3 + 2] = (Math.random() - 0.5) * 100;
+                
+                // Color
+                colors[i * 3] = Math.random();
+                colors[i * 3 + 1] = Math.random();
+                colors[i * 3 + 2] = Math.random();
+                
+                // Initial velocity
+                velocities[i * 3] = (Math.random() - 0.5) * 2;
+                velocities[i * 3 + 1] = (Math.random() - 0.5) * 2;
+                velocities[i * 3 + 2] = (Math.random() - 0.5) * 2;
+            }
+            
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
+            
+            const material = new THREE.PointsMaterial({
+                size: PARTICLE_SIZE,
+                vertexColors: true,
+                blending: THREE.AdditiveBlending,
+                transparent: true
+            });
+            
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+        }
+        
+        createParticleSystem();
+        camera.position.z = 100;
+        
+        // Performance monitoring
+        let lastTime = performance.now();
+        let frameCount = 0;
+        const statsElement = document.getElementById('stats');
+        
+        // Animation loop
+        function animate() {
+            const currentTime = performance.now();
+            const deltaTime = (currentTime - lastTime) / 1000 * SIMULATION_SPEED;
+            lastTime = currentTime;
+            
+            frameCount++;
+            if (frameCount % 30 === 0) {
+                const fps = Math.round(1 / deltaTime);
+                statsElement.textContent = `FPS: ${fps}\nParticles: ${NUM_PARTICLES}\nSimulation Speed: ${SIMULATION_SPEED.toFixed(1)}x`;
+            }
+            
+            // Update particle positions
+            const positions = particles.geometry.attributes.position.array;
+            const velocities = particles.geometry.attributes.velocity.array;
+            
+            for (let i = 0; i < NUM_PARTICLES; i++) {
+                const ix = i * 3;
+                const iy = i * 3 + 1;
+                const iz = i * 3 + 2;
+                
+                // Update position based on velocity
+                positions[ix] += velocities[ix] * deltaTime;
+                positions[iy] += velocities[iy] * deltaTime;
+                positions[iz] += velocities[iz] * deltaTime;
+                
+                // Apply gravitational force towards center
+                const dist = Math.sqrt(
+                    positions[ix] * positions[ix] +
+                    positions[iy] * positions[iy] +
+                    positions[iz] * positions[iz]
+                );
+                
+                if (dist > 0) {
+                    const force = GRAVITATIONAL_CONSTANT / (dist * dist);
+                    velocities[ix] -= (positions[ix] / dist) * force * deltaTime;
+                    velocities[iy] -= (positions[iy] / dist) * force * deltaTime;
+                    velocities[iz] -= (positions[iz] / dist) * force * deltaTime;
+                }
+                
+                // Boundary conditions
+                const bounds = 50;
+                if (Math.abs(positions[ix]) > bounds) velocities[ix] *= -0.9;
+                if (Math.abs(positions[iy]) > bounds) velocities[iy] *= -0.9;
+                if (Math.abs(positions[iz]) > bounds) velocities[iz] *= -0.9;
+            }
+            
+            particles.geometry.attributes.position.needsUpdate = true;
+            particles.geometry.attributes.velocity.needsUpdate = true;
+            
+            renderer.render(scene, camera);
+            requestAnimationFrame(animate);
+        }
+        
+        animate();
+        
+        // UI Controls
+        const particleCountSlider = document.getElementById('particleCount');
+        const particleSizeSlider = document.getElementById('particleSize');
+        const simulationSpeedSlider = document.getElementById('simulationSpeed');
+        const gravityStrengthSlider = document.getElementById('gravityStrength');
+        const resetButton = document.getElementById('resetSimulation');
+        
+        particleCountSlider.addEventListener('input', (e) => {
+            NUM_PARTICLES = parseInt(e.target.value);
+            document.getElementById('particleCountValue').textContent = NUM_PARTICLES;
+            createParticleSystem();
+        });
+        
+        particleSizeSlider.addEventListener('input', (e) => {
+            PARTICLE_SIZE = parseFloat(e.target.value);
+            document.getElementById('particleSizeValue').textContent = PARTICLE_SIZE.toFixed(1);
+            if (particles) {
+                particles.material.size = PARTICLE_SIZE;
+            }
+        });
+        
+        simulationSpeedSlider.addEventListener('input', (e) => {
+            SIMULATION_SPEED = parseFloat(e.target.value);
+            document.getElementById('simulationSpeedValue').textContent = SIMULATION_SPEED.toFixed(1);
+        });
+        
+        gravityStrengthSlider.addEventListener('input', (e) => {
+            GRAVITATIONAL_CONSTANT = parseFloat(e.target.value);
+            document.getElementById('gravityStrengthValue').textContent = GRAVITATIONAL_CONSTANT.toFixed(2);
+        });
+        
+        resetButton.addEventListener('click', () => {
+            createParticleSystem();
+        });
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

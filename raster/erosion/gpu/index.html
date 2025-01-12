@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GPU Morphological Operations Benchmark</title>
+</head>
+<body>
+    <h2>GPU Morphological Operations</h2>
+    <canvas id="sourceCanvas"></canvas>
+    <canvas id="glCanvas"></canvas>
+    <div id="metrics"></div>
+
+    <script>
+        const width = 512;
+        const height = 512;
+        const sourceCanvas = document.getElementById('sourceCanvas');
+        const glCanvas = document.getElementById('glCanvas');
+        sourceCanvas.width = glCanvas.width  = width;
+        sourceCanvas.height = glCanvas.height = height;
+
+        // WebGL setup
+        const gl = glCanvas.getContext('webgl2');
+        if (!gl) {
+            alert('WebGL2 not supported');
+            throw new Error('WebGL2 not supported');
+        }
+
+        // Shader source code
+        const vertexShaderSource = `#version 300 es
+            in vec4 a_position;
+            in vec2 a_texCoord;
+            out vec2 v_texCoord;
+            void main() {
+                gl_Position = a_position;
+                v_texCoord = a_texCoord;
+            }`;
+
+        const fragmentShaderSource = `#version 300 es
+            precision highp float;
+            uniform sampler2D u_image;
+            in vec2 v_texCoord;
+            out vec4 outColor;
+            
+            void main() {
+                vec2 onePixel = vec2(1.0) / vec2(textureSize(u_image, 0));
+                float min_value = 1.0;  // Starting with maximum value
+                
+                // Sample 3x3 neighborhood
+                for(int y = -1; y <= 1; y++) {
+                    for(int x = -1; x <= 1; x++) {
+                        vec2 offset = vec2(float(x), float(y)) * onePixel;
+                        vec4 color = texture(u_image, v_texCoord + offset);
+                        min_value = min(min_value, color.r);  // Take minimum of red channel
+                    }
+                }
+                
+                outColor = vec4(min_value, min_value, min_value, 1.0);  // This was the original line
+            }`;
+
+        // Load and process image
+        const img = new Image();
+        img.src = './4.png';
+        img.onload = async () => {
+            const ctx = sourceCanvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            
+            // Setup WebGL program
+            const program = createProgram(gl, vertexShaderSource, fragmentShaderSource);
+            gl.useProgram(program);
+
+            // Benchmark GPU operations
+            const metrics = await benchmarkGPU(gl, program, sourceCanvas);
+            document.getElementById('metrics').innerHTML = `
+                <h3>Benchmark Results:</h3>
+                <table style="border-collapse: collapse; margin: 10px 0;">
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid #ddd;">Upload Time:</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">${metrics.uploadTime.toFixed(2)} ms</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid #ddd;">Process Time:</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">${metrics.processTime.toFixed(2)} ms</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 8px; border: 1px solid #ddd;">Readback Time:</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">${metrics.readbackTime.toFixed(2)} ms</td>
+                    </tr>
+                    <tr style="font-weight: bold;">
+                        <td style="padding: 8px; border: 1px solid #ddd;">Total Time:</td>
+                        <td style="padding: 8px; border: 1px solid #ddd;">${metrics.totalTime.toFixed(2)} ms</td>
+                    </tr>
+                </table>`;
+        };
+
+        async function benchmarkGPU(gl, program, sourceCanvas) {
+            // Setup vertex buffer
+            const positionBuffer = gl.createBuffer();
+            const positions = new Float32Array([
+                -1, -1,
+                1, -1,
+                -1, 1,
+                1, 1,
+            ]);
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+            // Setup texture coordinates buffer
+            const texCoordBuffer = gl.createBuffer();
+            const texCoords = new Float32Array([
+                0, 0,
+                1, 0,
+                0, 1,
+                1, 1,
+            ]);
+            gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+
+            // Get attribute locations
+            const positionLoc = gl.getAttribLocation(program, 'a_position');
+            const texCoordLoc = gl.getAttribLocation(program, 'a_texCoord');
+
+            // Start timing upload
+            const uploadStart = performance.now();
+            const texture = createTexture(gl, sourceCanvas);
+            const uploadTime = performance.now() - uploadStart;
+
+            // Setup vertex attributes
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.enableVertexAttribArray(positionLoc);
+            gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+            gl.enableVertexAttribArray(texCoordLoc);
+            gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 0, 0);
+
+            // Process timing
+            const processStart = performance.now();
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            gl.finish();
+            const processTime = performance.now() - processStart;
+
+            // Read back timing
+            const readbackStart = performance.now();
+            const pixels = new Uint8Array(width * height * 4);
+            gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+            const readbackTime = performance.now() - readbackStart;
+
+            // Create a temporary canvas to flip the image vertically
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width;
+            tempCanvas.height = height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Create ImageData and draw it to temporary canvas
+            const imageData = new ImageData(new Uint8ClampedArray(pixels), width, height);
+            tempCtx.putImageData(imageData, 0, 0);
+            
+
+            return {
+                uploadTime,
+                processTime,
+                readbackTime,
+                totalTime: uploadTime + processTime + readbackTime
+            };
+        }
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            return shader;
+        }
+
+        function createProgram(gl, vertexSource, fragmentSource) {
+            const program = gl.createProgram();
+            gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vertexSource));
+            gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fragmentSource));
+            gl.linkProgram(program);
+            return program;
+        }
+
+        function createTexture(gl, image) {
+            const texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            return texture;
+        }
+    </script>
+</body>
+</html>

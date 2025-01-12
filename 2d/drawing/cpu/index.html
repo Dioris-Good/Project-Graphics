@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CPU Benchmark</title>
+</head>
+<body>
+    <canvas id="cpuCanvas" width="800" height="600"></canvas>
+    <div id="cpuResults"></div>
+    <script>
+        const canvas = document.getElementById('cpuCanvas');
+        const ctx = canvas.getContext('2d');
+        const resultsDiv = document.getElementById('cpuResults');
+
+        // Generate random shapes
+        const shapes = [];
+        for (let i = 0; i < 10000; i++) {
+            shapes.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 20 + 5,
+                color: `rgba(${Math.random() * 255}, ${Math.random() * 255}, ${Math.random() * 255}, 1)`
+            });
+        }
+
+        // Measure rendering time
+        const startTime = performance.now();
+        shapes.forEach(shape => {
+            ctx.fillStyle = shape.color;
+            ctx.beginPath();
+            ctx.arc(shape.x, shape.y, shape.size, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        const endTime = performance.now();
+
+        // Measure memory usage
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const memoryUsage = imageData.data.byteLength;
+
+        const resultText = `CPU Draw: ${endTime - startTime} ms, Memory usage: ${memoryUsage / (1024 * 1024)} MB`;
+        resultsDiv.textContent = resultText;
+    </script>
+</body>
+</html>

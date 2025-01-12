@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GPU Image Processing Benchmark</title>
+    <style>
+        canvas { border: 1px solid #ccc; }
+        .controls { margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button onclick="applyFilter('blur')">Gaussian Blur</button>
+        <button onclick="applyFilter('sharpen')">Sharpen</button>
+        <button onclick="applyFilter('edge')">Edge Detection</button>
+    </div>
+    <canvas id="glCanvas" width="512" height="512"></canvas>
+    <div id="results"></div>
+
+    <script>
+        const canvas = document.getElementById('glCanvas');
+        const gl = canvas.getContext('webgl');
+        let currentTexture;
+
+        // Vertex shader - simple pass-through
+        const vsSource = `
+            attribute vec4 aPosition;
+            attribute vec2 aTexCoord;
+            varying vec2 vTexCoord;
+            void main() {
+                gl_Position = aPosition;
+                vTexCoord = aTexCoord;
+            }
+        `;
+
+        // Fragment shader with configurable kernel
+        const fsSource = `
+            precision mediump float;
+            varying vec2 vTexCoord;
+            uniform sampler2D uTexture;
+            uniform float uKernel[25];
+            uniform vec2 uTextureSize;
+
+            void main() {
+                vec2 onePixel = vec2(1.0, 1.0) / uTextureSize;
+                vec4 colorSum = vec4(0.0);
+                
+                for(int i = -2; i <= 2; i++) {
+                    for(int j = -2; j <= 2; j++) {
+                        vec2 offset = vec2(float(i), float(j)) * onePixel;
+                        vec4 neighborColor = texture2D(uTexture, vTexCoord + offset);
+                        float weight = uKernel[(i + 2) * 5 + (j + 2)];
+                        colorSum += neighborColor * weight;
+                    }
+                }
+                
+                gl_FragColor = vec4(colorSum.rgb, 1.0);
+            }
+        `;
+
+        // Kernel definitions
+        const kernels = {
+            blur: [
+                1/256, 4/256, 6/256, 4/256, 1/256,
+                4/256, 16/256, 24/256, 16/256, 4/256,
+                6/256, 24/256, 36/256, 24/256, 6/256,
+                4/256, 16/256, 24/256, 16/256, 4/256,
+                1/256, 4/256, 6/256, 4/256, 1/256
+            ],
+            sharpen: [
+                0, 0, 0, 0, 0,
+                0, 0, -1, 0, 0,
+                0, -1, 5, -1, 0,
+                0, 0, -1, 0, 0,
+                0, 0, 0, 0, 0
+            ],
+            edge: [
+                -1, -1, -1, -1, -1,
+                -1, -1, -1, -1, -1,
+                -1, -1, 24, -1, -1,
+                -1, -1, -1, -1, -1,
+                -1, -1, -1, -1, -1
+            ]
+        };
+
+        function initWebGL() {
+            if (!gl) {
+                alert('WebGL not supported');
+                return;
+            }
+
+            // Create shaders and program
+            const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+            gl.shaderSource(vertexShader, vsSource);
+            gl.compileShader(vertexShader);
+
+            const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+            gl.shaderSource(fragmentShader, fsSource);
+            gl.compileShader(fragmentShader);
+
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            gl.useProgram(program);
+
+            // Set up buffers
+            const positions = new Float32Array([
+                -1, -1,
+                1, -1,
+                -1, 1,
+                1, 1
+            ]);
+            const texCoords = new Float32Array([
+                0, 0,
+                1, 0,
+                0, 1,
+                1, 1
+            ]);
+
+            const positionBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+            const positionLocation = gl.getAttribLocation(program, 'aPosition');
+            gl.enableVertexAttribArray(positionLocation);
+            gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+            const texCoordBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+            const texCoordLocation = gl.getAttribLocation(program, 'aTexCoord');
+            gl.enableVertexAttribArray(texCoordLocation);
+            gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+            return program;
+        }
+
+        function loadImage() {
+            const image = new Image();
+            image.src = './4.png';
+            
+            image.onload = () => {
+                gl.viewport(0, 0, canvas.width, canvas.height);
+
+                currentTexture = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, currentTexture);
+                gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image)
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+                // Add initial draw with identity kernel (no filter)
+                const identityKernel = [
+                    0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0,
+                    0, 0, 1, 0, 0,
+                    0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0
+                ];
+                const kernelLocation = gl.getUniformLocation(program, 'uKernel');
+                const textureSizeLocation = gl.getUniformLocation(program, 'uTextureSize');
+                
+                gl.uniform1fv(kernelLocation, identityKernel);
+                gl.uniform2f(textureSizeLocation, canvas.width, canvas.height);
+                
+                gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            };
+        }
+
+        function applyFilter(filterType) {
+            const startTime = performance.now();
+            
+            const kernel = kernels[filterType];
+            const kernelLocation = gl.getUniformLocation(program, 'uKernel');
+            const textureSizeLocation = gl.getUniformLocation(program, 'uTextureSize');
+            
+            gl.uniform1fv(kernelLocation, kernel);
+            gl.uniform2f(textureSizeLocation, canvas.width, canvas.height);
+            
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            
+            const endTime = performance.now();
+            document.getElementById('results').innerHTML = 
+                `GPU ${filterType} filter time: ${(endTime - startTime).toFixed(2)}ms`;
+        }
+
+        const program = initWebGL();
+        loadImage();
+    </script>
+</body>
+</html>
